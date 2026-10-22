@@ -1,0 +1,5 @@
+requests>=2.31,<3
+feedparser>=6.0,<7
+PyYAML>=6.0,<7
+# Only needed when filters.llm.enabled is true in config.yaml
+anthropic>=0.40

@@ -1,0 +1,132 @@
+name: Job alerts
+
+on:
+  schedule:
+    # GitHub cron is always UTC. Africa/Nairobi is UTC+3 all year (no daylight
+    # saving), so subtract 3 hours:
+    #   08:00 Nairobi = 05:00 UTC
+    #   16:00 Nairobi = 13:00 UTC
+    # GitHub may start scheduled runs some minutes late at busy times.
+    - cron: "0 5 * * *"
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print jobs only: send nothing, save nothing"
+        type: boolean
+        default: false
+      source:
+        description: "Run a single source (remotive, remoteok, weworkremotely, jooble, adzuna); empty = all"
+        type: string
+        default: ""
+      seed:
+        description: "Mark all current jobs as seen WITHOUT sending (first deployment)"
+        type: boolean
+        default: false
+
+# Never let two runs overlap: the second waits instead of racing on the database.
+concurrency:
+  group: job-alerts
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # push the SQLite database to the `state` branch
+  actions: write    # keepalive: re-enable this workflow via the API
+
+env:
+  STATE_BRANCH: state
+  DB_PATH: data/jobs.db   # must match storage.db_path in config.yaml
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # If the tests fail, the bot does not run (and the database is untouched).
+      - name: Run tests
+        run: python -m pytest -q
+
+      # Database persistence: the DB lives as a single file on the orphan
+      # `state` branch (see README "Why a state branch"). First run: no branch yet.
+      - name: Restore database from the state branch
+        run: |
+          mkdir -p "$(dirname "$DB_PATH")"
+          if git ls-remote --exit-code --heads origin "$STATE_BRANCH" > /dev/null; then
+            git fetch --depth=1 origin "$STATE_BRANCH"
+            if git cat-file -e FETCH_HEAD:jobs.db 2>/dev/null; then
+              git show FETCH_HEAD:jobs.db > "$DB_PATH"
+              echo "Restored database ($(stat -c %s "$DB_PATH") bytes)"
+            else
+              echo "State branch has no jobs.db yet; starting fresh"
+            fi
+          else
+            echo "No $STATE_BRANCH branch yet; starting with an empty database"
+          fi
+
+      - name: Run job bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          JOOBLE_API_KEY: ${{ secrets.JOOBLE_API_KEY }}
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # workflow_dispatch inputs (empty/false on scheduled runs)
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_SOURCE: ${{ inputs.source }}
+          INPUT_SEED: ${{ inputs.seed }}
+        run: |
+          args=()
+          if [ "$INPUT_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          if [ "$INPUT_SEED" = "true" ]; then args+=(--seed); fi
+          if [ -n "$INPUT_SOURCE" ]; then args+=(--source "$INPUT_SOURCE"); fi
+          python main.py "${args[@]}"
+
+      # Runs even when the bot exits non-zero (e.g. every channel failed): jobs
+      # are only marked seen after delivery, so saving is always safe, and it
+      # keeps the LLM cache. Skipped for dry runs, which never change the DB.
+      - name: Save database to the state branch
+        if: ${{ !cancelled() && inputs.dry_run != true && hashFiles('data/jobs.db') != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          work="$(mktemp -d)"
+          cp "$DB_PATH" "$work/jobs.db"
+          cd "$work"
+          git init -q
+          git checkout -q -b "$STATE_BRANCH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add jobs.db
+          git commit -q -m "Update job database ($(date -u +%Y-%m-%dT%H:%MZ), run ${GITHUB_RUN_ID})"
+          # Force-push a single orphan commit: the branch always holds just the
+          # latest DB, so repository history does not grow with every run.
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$STATE_BRANCH"
+          echo "Database saved to $STATE_BRANCH"
+
+      # GitHub disables scheduled workflows in public repos after 60 days without
+      # repository activity. Re-enabling the workflow through the API (a no-op when
+      # it is already enabled) resets that timer without any dummy commits.
+      - name: Keepalive
+        if: ${{ !cancelled() && github.event_name == 'schedule' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api --method PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/jobs.yml/enable"

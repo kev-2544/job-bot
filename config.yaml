@@ -1,0 +1,202 @@
+# Job-alert bot configuration. Secrets never go here: they come from
+# environment variables (see .env.example). Every key below has a built-in
+# default in jobbot/config.py, so you only need to keep what you change.
+
+log_level: INFO
+
+storage:
+  db_path: data/jobs.db
+
+http:
+  timeout_seconds: 20
+  max_retries: 3
+  backoff_factor: 2          # exponential: roughly 0s, 4s, 8s ... between retries (honours Retry-After)
+  user_agent: "kenya-remote-job-bot/1.0 (personal job alerts; contact via GitHub repo)"
+
+sources:
+  remotive:
+    enabled: true
+    url: "https://remotive.com/api/remote-jobs"
+    category: software-dev
+    # The public API currently ignores `category`, so we also keep only these
+    # Remotive categories ourselves. Set to [] to keep every category.
+    categories:
+      - Software Development
+      - DevOps / Sysadmin
+  remoteok:
+    enabled: true
+    url: "https://remoteok.com/api"
+  weworkremotely:
+    enabled: true
+    feeds:
+      - "https://weworkremotely.com/categories/remote-programming-jobs.rss"
+      - "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss"
+      - "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss"
+      - "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss"
+      - "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss"
+  jooble:
+    enabled: true
+    keywords: "software developer"
+    location: "Kenya"
+  adzuna:
+    enabled: true
+    # Adzuna has no Kenya endpoint, so we search other markets for remote roles
+    # and let the location filter decide eligibility.
+    countries: ["gb", "us"]
+    what: "software developer remote"
+    results_per_page: 50
+
+filters:
+  # 1. Role match (case-insensitive, whole-word) against title, and against
+  #    description when match_description is true.
+  role_keywords:
+    - software
+    - developer
+    - engineer
+    - backend
+    - back-end
+    - back end
+    - frontend
+    - front-end
+    - front end
+    - full stack
+    - full-stack
+    - fullstack
+    - python
+    - javascript
+    - typescript
+    - devops
+    - mobile
+    - android
+    - ios
+    - sre
+  match_description: true
+  # A description-only match needs this many DIFFERENT role keywords, so a
+  # single "software" in an office-assistant posting does not count.
+  description_min_keyword_hits: 3
+  # Titles containing any of these are rejected even if a role keyword matches
+  # (e.g. "Sales Engineer"). Set to [] to disable.
+  title_exclude_keywords:
+    - sales
+    - recruiter
+    - recruiting
+    - marketing
+    - account executive
+
+  # 2. Location eligibility. Any of these in location text or description => eligible.
+  allow_keywords:
+    - kenya
+    - nairobi
+    - africa
+    - emea
+    - worldwide
+    - anywhere
+    - global
+    - work from anywhere
+  # Generic words that, when found ONLY in the description (not the location
+  # field), keep the job but flag it needs_checking ("our global customers"
+  # is not a location policy).
+  weak_description_keywords:
+    - worldwide
+    - anywhere
+    - global
+  # Phrases removed before allow-matching, so "South Africa" does not count
+  # as "africa". Add them to restricted_location_terms to reject them too.
+  allow_mask_phrases:
+    - south africa
+    - north africa
+    - west africa
+
+  # 3. Exclusions. Plain phrases (whole-word, case-insensitive) searched in
+  #    location text and description. Exclusions beat allow keywords.
+  exclude_phrases:
+    - us only
+    - usa only
+    - u.s. only
+    - united states only
+    - must be located in the us
+    - must be located in the united states
+    - must be based in the us
+    - must reside in the us
+    - us residents
+    - us citizens only
+    - uk only
+    - uk residents
+    - must be based in the uk
+    - eu only
+    - europe only
+    - eu residents
+    - north america only
+    - americas only
+    - canada only
+    - latam only
+    - apac only
+    - work authorization required
+  # Regular expressions (Python syntax, case-insensitive) for rules that need
+  # context, e.g. "no visa sponsorship" tied to a specific non-African country.
+  exclude_patterns:
+    - 'no (visa )?sponsorship[^.]{0,80}\b(u\.s\.?|usa|united states|uk|u\.k\.|united kingdom|canada|eu|europe|germany|australia)\b'
+    - '\b(u\.s\.?|usa|united states|uk|u\.k\.|united kingdom|canada|eu|europe|germany|australia)\b[^.]{0,80}no (visa )?sponsorship'
+    - '(authori[sz]ed|eligible|legally able) to work in the (u\.s\.?|usa|united states|uk|united kingdom|canada|eu|european union)'
+    - 'must (be|live|reside)( located| based)? in (the )?(us|u\.s\.?|usa|united states|uk|united kingdom|canada|europe|eu)\b'
+    - '\b(anywhere|remote) (with)?in (the )?(us|u\.s\.?|usa|united states|uk|united kingdom|canada|europe|eu)\b'
+  # If the LOCATION field mentions one of these and no allow keyword, the job
+  # is treated as restricted to that region and rejected.
+  restricted_location_terms:
+    - us
+    - usa
+    - u.s.
+    - united states
+    - america
+    - americas
+    - north america
+    - latam
+    - latin america
+    - canada
+    - uk
+    - united kingdom
+    - europe
+    - eu
+    - germany
+    - france
+    - spain
+    - netherlands
+    - poland
+    - portugal
+    - ireland
+    - india
+    - apac
+    - asia
+    - australia
+    - brazil
+    - mexico
+    - philippines
+    - south africa
+    - north africa
+    - west africa
+    - nigeria
+    - egypt
+    - ghana
+    - morocco
+
+  # 4. Ambiguous location (no allow keyword, no exclusion): keep with
+  #    needs_checking: true. Set to false to drop them instead.
+  keep_ambiguous: true
+
+  # 5. Optional LLM check with the Anthropic API (needs ANTHROPIC_API_KEY).
+  llm:
+    enabled: false
+    model: claude-sonnet-4-6
+    # "ambiguous": only jobs flagged needs_checking; "all": every kept job.
+    scope: ambiguous
+    max_checks_per_run: 30
+    max_description_chars: 8000
+    # If the API call fails, keep the job flagged needs_checking.
+    fail_open: true
+
+notifications:
+  telegram: true
+  email: true
+  send_empty_notice: false
+  telegram_digest_threshold: 10   # more than this many new jobs => digest messages
+  max_jobs_per_run: 50            # safety cap on how many jobs one run sends
