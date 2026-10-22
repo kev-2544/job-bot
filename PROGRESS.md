@@ -120,6 +120,9 @@ Run command for CI: `python main.py` (DB at `data/jobs.db` from `storage.db_path
 21. **Keepalive**: on scheduled runs, `gh api --method PUT repos/$REPO/actions/workflows/jobs.yml/enable` (the same API call the community keepalive-workflow action uses), `continue-on-error`. No dummy commits, no third-party action.
 22. **`--seed`** flag (and workflow input): marks every current new job as seen without sending, uncapped, to skip the first-run backlog.
 
+### After Phase 3
+23. **Freshness filter** `filters.max_age_days: 7` (rule 0, before role match): jobs with a `posted_date` older than that are dropped; jobs without a date are kept; naive datetimes are treated as UTC; `0` disables it. `JobFilter(cfg, now=None)` takes `now` for tests.
+
 ## Manual steps remaining (for the user)
 1. `git init`, commit, create a GitHub repo, push (this folder is not a git repo yet). `.venv/` and `.env` are git-ignored.
 2. Create the Telegram bot and get the chat ID; create a Gmail App Password (README sections 2-3).

@@ -3,6 +3,7 @@
 import copy
 import json
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +25,40 @@ def job(title="Senior Python Developer", company="Acme", location="", descriptio
 
 def evaluate(filter_cfg, j):
     return JobFilter(filter_cfg).evaluate(j)
+
+
+# --- Freshness ----------------------------------------------------------------
+
+NOW = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "age_days, kept",
+    [(0, True), (6, True), (7, True), (8, False), (20, False)],
+)
+def test_jobs_older_than_max_age_are_dropped(filter_cfg, age_days, kept):
+    j = job(location="Worldwide")
+    j.posted_date = NOW - timedelta(days=age_days)
+    result = JobFilter(filter_cfg, now=NOW).evaluate(j)
+    assert result.keep is kept, result.reason
+    if not kept:
+        assert result.reason == f"too old (posted {age_days} days ago)"
+
+
+def test_job_without_date_is_kept(filter_cfg):
+    assert JobFilter(filter_cfg, now=NOW).evaluate(job(location="Worldwide")).keep
+
+
+def test_naive_dates_are_treated_as_utc(filter_cfg):
+    j = job(location="Worldwide")
+    j.posted_date = datetime(2026, 10, 1)  # no tzinfo
+    assert not JobFilter(filter_cfg, now=NOW).evaluate(j).keep
+
+
+def test_max_age_zero_disables_the_check(filter_cfg):
+    j = job(location="Worldwide")
+    j.posted_date = NOW - timedelta(days=365)
+    assert JobFilter(replace(filter_cfg, max_age_days=0), now=NOW).evaluate(j).keep
 
 
 # --- Eligible -----------------------------------------------------------------

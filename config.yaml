@@ -47,6 +47,10 @@ sources:
     results_per_page: 50
 
 filters:
+  # 0. Freshness: drop jobs posted more than this many days ago. Jobs with no
+  #    posting date are kept (their age is unknown). 0 disables the check.
+  max_age_days: 7
+
   # 1. Role match (case-insensitive, whole-word) against title, and against
   #    description when match_description is true.
   role_keywords:

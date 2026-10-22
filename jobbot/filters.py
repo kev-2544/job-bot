@@ -2,6 +2,7 @@
 
 Pipeline for one job (first decisive rule wins):
 
+0. Posted more than max_age_days ago               -> reject  (no date = keep)
 1. Title contains a title_exclude keyword         -> reject
 2. No role keyword in title, and fewer than
    description_min_keyword_hits in description    -> reject
@@ -20,6 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from .config import FilterConfig
@@ -70,8 +72,10 @@ def _prepare(text: str) -> str:
 
 
 class JobFilter:
-    def __init__(self, cfg: FilterConfig) -> None:
+    def __init__(self, cfg: FilterConfig, now: datetime | None = None) -> None:
         self.cfg = cfg
+        self.now = now or datetime.now(timezone.utc)
+        self.cutoff = self.now - timedelta(days=cfg.max_age_days) if cfg.max_age_days > 0 else None
         self.role = TermMatcher(cfg.role_keywords)
         self.title_exclude = TermMatcher(cfg.title_exclude_keywords)
         self.allow = TermMatcher(cfg.allow_keywords)
@@ -91,6 +95,14 @@ class JobFilter:
         title = _prepare(job.title)
         location = _prepare(job.location_text)
         description = _prepare(job.description)
+
+        # 0. Freshness
+        if self.cutoff and job.posted_date:
+            posted = job.posted_date
+            if posted.tzinfo is None:
+                posted = posted.replace(tzinfo=timezone.utc)
+            if posted < self.cutoff:
+                return FilterResult(False, False, f"too old (posted {(self.now - posted).days} days ago)")
 
         # 1-2. Role match
         hit = self.title_exclude.first(title)

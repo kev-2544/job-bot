@@ -59,6 +59,7 @@ DEFAULTS: dict[str, Any] = {
         },
     },
     "filters": {
+        "max_age_days": 7,
         "role_keywords": [
             "software", "developer", "engineer", "backend", "back-end", "back end",
             "frontend", "front-end", "front end", "full stack", "full-stack", "fullstack",
@@ -140,6 +141,7 @@ class LLMConfig:
 
 @dataclass
 class FilterConfig:
+    max_age_days: int
     role_keywords: list[str]
     match_description: bool
     description_min_keyword_hits: int
@@ -230,6 +232,7 @@ def build_config(data: dict[str, Any]) -> Config:
             user_agent=str(h["user_agent"]),
         ),
         filters=FilterConfig(
+            max_age_days=max(0, int(f.get("max_age_days", 7))),
             role_keywords=_str_list(f.get("role_keywords"), "filters.role_keywords"),
             match_description=bool(f.get("match_description", True)),
             description_min_keyword_hits=max(1, int(f.get("description_min_keyword_hits", 3))),

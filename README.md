@@ -3,7 +3,7 @@
 A small bot that runs twice a day, pulls remote software jobs from free job boards, keeps only those a **Kenya-based candidate can realistically apply for**, removes duplicates, and sends you **only new** jobs by Telegram and/or email.
 
 - **Sources:** Remotive, Remote OK, We Work Remotely (RSS), Jooble, Adzuna. LinkedIn, Indeed and Google are never scraped.
-- **Filtering:** role keywords, then location eligibility (Kenya, Nairobi, Africa, EMEA, worldwide, anywhere…), then exclusions (US only, EU only, "must be authorized to work in the US"…). Jobs with an unclear location are kept and marked **needs checking**. An optional Claude check is available for those.
+- **Filtering:** only jobs posted in the last 7 days, then role keywords, then location eligibility (Kenya, Nairobi, Africa, EMEA, worldwide, anywhere…), then exclusions (US only, EU only, "must be authorized to work in the US"…). Jobs with an unclear location are kept and marked **needs checking**. An optional Claude check is available for those.
 - **Delivery:** one Telegram message per job (or a digest above 10 jobs), plus one HTML email digest per run.
 - **Runs on:** GitHub Actions at 08:00 and 16:00 Nairobi time. The SQLite database of jobs already seen is kept between runs.
 
@@ -183,7 +183,7 @@ Everything except secrets lives in [`config.yaml`](config.yaml). Every key has a
 | Section | Key settings |
 |---|---|
 | `sources.<name>` | `enabled`, plus per-source options (Remotive `categories`, WWR `feeds`, Jooble `keywords`/`location`, Adzuna `countries`/`what`) |
-| `filters` | `role_keywords`, `title_exclude_keywords`, `allow_keywords`, `exclude_phrases`, `exclude_patterns` (regex), `restricted_location_terms`, `keep_ambiguous`, `description_min_keyword_hits` |
+| `filters` | `max_age_days` (7; 0 = off), `role_keywords`, `title_exclude_keywords`, `allow_keywords`, `exclude_phrases`, `exclude_patterns` (regex), `restricted_location_terms`, `keep_ambiguous`, `description_min_keyword_hits` |
 | `filters.llm` | `enabled` (default `false`), `model` (`claude-sonnet-4-6`), `scope` (`ambiguous` = only "needs checking" jobs, or `all`), `max_checks_per_run` |
 | `notifications` | `telegram`, `email` (on/off), `send_empty_notice`, `telegram_digest_threshold` (10), `max_jobs_per_run` (50; extra jobs wait for the next run) |
 | `http` | timeout, retries, backoff, User-Agent |
@@ -268,6 +268,7 @@ fetch every enabled source (one failure doesn't stop the others)
 ```
 
 **Filter rules, in order** (first decisive rule wins; full detail in [`jobbot/filters.py`](jobbot/filters.py)):
+0. Posted more than `max_age_days` (default 7) days ago, so it's rejected. Jobs with no posting date are kept.
 1. Title contains an excluded word (sales, recruiter…), so it's rejected.
 2. No role keyword in the title, and fewer than 3 different role keywords in the description, so it's rejected.
 3. An exclusion phrase or pattern anywhere ("US only", "must be authorized to work in the US", "no visa sponsorship… UK"), so it's rejected. This beats "worldwide".
